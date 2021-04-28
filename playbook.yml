@@ -1,0 +1,84 @@
+---
+- hosts: all
+  become: true
+  tasks:
+    - name: ensure nginx is at the latest version
+      apt:
+        name: nginx
+        state: latest
+        update_cache: yes
+    - name: install php packages
+      apt:
+        name: ['php7.4-fpm', 'php7.4-xdebug', 'php7.4-dev',
+         'php7.4-curl', 'php7.4-mbstring', 'php7.4-xsl',
+         'php7.4-dom', 'php7.4-xml']
+        state: latest
+        update_cache: yes
+    - name: install compression utilities
+      apt:
+        name: ['zip', 'unzip', 'libsnappy-dev', 'zlib1g-dev',
+          'libbz2-dev', 'liblz4-dev', 'libzstd-dev']
+        state: latest
+        update_cache: yes
+    - name: install rocksdb dev lib
+      apt:
+        name: [ 'librocksdb-dev' ]
+        state: latest
+        update_cache: yes
+    - name: Git checkout rocksdb
+      ansible.builtin.git:
+        repo: 'https://github.com/facebook/rocksdb.git'
+        dest: /home/vagrant/rocksdb
+    - name: Run rocksdb 'static_lib' target
+      make:
+        chdir: /home/vagrant/rocksdb
+        target: static_lib
+      register: static_lib
+    - name: Run rocksdb 'install' target
+      make:
+        chdir: /home/vagrant/rocksdb
+        target: install
+      when: static_lib == "yes"
+    - name: Git checkout php-rocksdb
+      ansible.builtin.git:
+        repo: 'https://github.com/phpize7/php-rocksdb.git'
+        dest: /home/vagrant/php-rocksdb
+    - name: run phpize for php-rocksdb
+      command: '"{{ item }}"'
+      args:
+        chdir: '/home/vagrant/php-rocksdb/'
+        creates: '/usr/lib/php/20190902/**'
+      with_items: phpize
+    - name: Running ./configure for php-rocksdb
+      command: '"{{ item }}"'
+      args:
+         chdir: '/home/vagrant/php-rocksdb/'
+         creates: 'config.status'
+      with_items:
+        - ./configure
+    - name: copy the rocksdb php module to mods-available
+      copy:
+        src: config/rocksdb.ini
+        dest: /etc/php/7.4/mods-available/rocksdb.ini
+    - name: copy the php nginx config file to sites-available
+      copy: 
+        src: config/php.conf
+        dest: /etc/nginx/sites-available/php.conf
+    - name: enable the rocksdb php module if not enabled
+      command: phpenmod rocksdb
+      args:
+        chdir: /etc/php/7.4/mods-available
+        creates: /etc/php/7.4/fpm/conf.d/20-rocksdb.ini
+    - name: create nginx symlink for php.conf
+      file:
+        src: /etc/nginx/sites-available/php.conf
+        dest: /etc/nginx/sites-enabled/default
+        state: link
+    - name: restart php7.4-fpm
+      service:
+        name: php7.4-fpm
+        state: restarted
+    - name: restart nginx
+      service:
+        name: nginx
+        state: restarted
